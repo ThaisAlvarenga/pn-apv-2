@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>PN Junction Hello</title>
+		<link rel="stylesheet" href="index.css">
+		<link href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" rel="stylesheet" />
+		<link href="https://fonts.googleapis.com/css2?family=Bai+Jamjuree:wght@400;700&amp;display=swap" rel="stylesheet">
+		<style>
+			body { margin: 0; }
+		</style>
+		<script type="importmap">
+			{
+			  "imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+			  }
+			}
+		  </script>
+
+		  <script>
+				document.addEventListener("DOMContentLoaded", function () {
+				const fadeElements = document.querySelectorAll(".fade-in");
+
+				function handleScroll() {
+					fadeElements.forEach((element) => {
+						const rect = element.getBoundingClientRect();
+						if (rect.top < window.innerHeight * 0.85) {
+							element.classList.add("visible");
+						}
+					});
+				}
+
+				window.addEventListener("scroll", handleScroll);
+				handleScroll(); // Run once on page load in case elements are already in view
+			});
+
+		  </script>
+
+	</head>
+	
+	<body id="body_parent" class="noselect">
+		<div class="title-row">
+			<h1> P-N Junction: 3D visualization</h1>
+			<div class="col-lg-1"></div>
+			<p> A P-N junction is one of the most important semiconductor devices with applications ranging from rectifiers to solar cells. It is also an important part of more complex devices such as transistors. In this chapter you get to play with a 3D visualization of PN Junction. If you have a compatible Quest VR headset, try it out by selecting the XR button! </p>
+			<div class="col-lg-1"></div>
+		</div>
+	<div class="content">
+		<div class="container2 fade-in">
+			<div class="col-lg-3 col-md-4 col-sm-12" style="padding-right: 2em;"> 
+					<h1> Intro to P-N Junction </h1>
+					<p> Imagine you are inside the p-n junction. Do you see the recombining and generation of holes and electrons? Adjust the voltage levels to view how the holes and electrons respond to charge. </p>	
+					
+					<div class="sliderContainer">
+						<label for="voltage-range" class="sliderLabel" style ="color:white;" for="voltage">Applied Voltage:</label>
+						<input autocomplete="off" type="range" id="voltage" name="voltage-range" min="-1.4" max="0.4" step="0.01" value=0.0>
+						
+						<span class="range-value-label">
+							<datalist>
+								<option value="-1.4" label="-1.4"></option>
+								<p>&#20;</p>
+								<p>&#20;</p>
+								<p>&#20;</p>
+								<p>&#20;</p>
+								<option value="0" label="0"></option>
+								<option value="0.4" label="0.4"></option>
+							</datalist>
+						</span>
+						<h1>Voltage:  <span id="myText"></span></h1>
+					</div>		
+			</div>
+			<div class="col-lg-9 col-md-8 col-sm-12">
+				<div id="three-container-scene-1" style="height: 600px; width: 100%;"></div>
+			</div>
+		</div>
+		
+	</div>
+		<script type="module" src="./index.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
+
+	</body>
+</html>
