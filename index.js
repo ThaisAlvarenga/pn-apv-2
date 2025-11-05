@@ -157,6 +157,21 @@ const rayDot = new THREE.Mesh(
 );
 sliderRoot.add(rayDot); // it sits at (0,0,0) of sliderRoot
 
+function setVoltage(v) {
+  const clamped = THREE.MathUtils.clamp(v, SLIDER_MIN, SLIDER_MAX);
+  voltage = clamped;
+  sliderValue = clamped;                         // sync in-scene state
+
+  if (sliderKnob) sliderKnob.position.x = valueToX(clamped);
+  drawVoltageLabel(clamped);
+
+  const myTextEl = document.getElementById('myText');
+  if (myTextEl) myTextEl.textContent = clamped.toFixed(2);
+
+  if (voltageControl) voltageControl.value = clamped; // sync DOM slider thumb
+}
+
+
 // helpers: map value <-> local X along the track
 const valueToX = (v) => THREE.MathUtils.mapLinear(v, SLIDER_MIN, SLIDER_MAX, -TRACK_LEN_M/2, TRACK_LEN_M/2);
 const xToValue = (x) => THREE.MathUtils.clamp(
@@ -338,9 +353,10 @@ function updateSliderInteraction(frame) {
 
   // Clamp to track, set value, move knob
   const clampedX = THREE.MathUtils.clamp(local.x, -TRACK_LEN_M/2, TRACK_LEN_M/2);
-  sliderValue = xToValue(clampedX);
-  sliderKnob.position.x = THREE.MathUtils.lerp(sliderKnob.position.x, clampedX, 0.35);
-  drawVoltageLabel(sliderValue);
+  const newV = xToValue(clampedX);
+sliderKnob.position.x = THREE.MathUtils.lerp(sliderKnob.position.x, clampedX, 0.35);
+setVoltage(newV);
+
 }
 
 // Accessor (if you want it)
@@ -422,6 +438,10 @@ function init() {
 	setUpVRControls();
     initWristSlider();
 
+    // If your HTML slider has an initial value, use it; otherwise set 0.
+const startV = parseFloat(voltageControl?.value ?? '0') || 0;
+setVoltage(startV);
+
 
      // Add explicit size check
      if (!container) {
@@ -491,10 +511,8 @@ function init() {
 
 
     voltageControl.addEventListener('input', () => {
-        voltageLevel = parseFloat(voltageControl.value);
-        voltage = voltageLevel;
-        document.getElementById("myText").innerHTML = voltage;
-     });
+  setVoltage(parseFloat(voltageControl.value));
+});
 
  
     
@@ -786,7 +804,7 @@ function update() {
   updateSliderInteraction(frame);
 
   //  use slider as the source of truth for voltage
-  voltage = sliderValue;
+  //voltage = sliderValue;
   const myTextEl = document.getElementById('myText');
   if (myTextEl) myTextEl.textContent = voltage.toFixed(2);
 
