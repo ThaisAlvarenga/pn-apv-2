@@ -55,6 +55,9 @@
 					<div class="sliderContainer">
 						<label for="voltage-range" class="sliderLabel" style ="color:white;" for="voltage">Applied Voltage:</label>
 						<input autocomplete="off" type="range" id="voltage" name="voltage-range" min="-1.4" max="0.4" step="0.01" value=0.0>
+
+						<div class="ticks" id="voltage-ticks" aria-hidden="true"></div>
+
 						
 						<span class="range-value-label">
 							<datalist>
@@ -76,8 +79,70 @@
 		</div>
 		
 	</div>
-		<script type="module" src="./index.js"></script>
-		<script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
+
+	<script type="module" src="./index.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
+		
+	<script>
+	(function () {
+	const slider = document.getElementById('voltage');
+	const ticks  = document.getElementById('voltage-ticks');
+	if (!slider || !ticks) return;
+
+	// EXACT values you display as ticks
+	const values = [-1.4, 0, 0.4];
+
+	// Build once
+	ticks.innerHTML = '';
+	values.forEach(v => {
+		const el = document.createElement('span');
+		el.className = 'tick';
+		el.textContent = String(v);
+		ticks.appendChild(el);
+	});
+
+	function place() {
+		const min = parseFloat(slider.min);
+		const max = parseFloat(slider.max);
+		const width = slider.clientWidth; // should be 240px per your CSS
+
+		// Keep ticks container aligned to slider width
+		ticks.style.width = width + 'px';
+
+		// Position each tick by % along the track
+		[...ticks.children].forEach((el, i) => {
+		const v = values[i];
+		const pct = (v - min) / (max - min); // 0..1
+		el.style.left = (pct * width) + 'px';
+		});
+	}
+
+	// Initial + on layout changes
+	place();
+	window.addEventListener('resize', place);
+	if (window.ResizeObserver) new ResizeObserver(place).observe(slider);
+	if (document.fonts && document.fonts.ready) document.fonts.ready.then(place);
+	})();
+	</script>
+
+	<script>
+	(function () {
+	const ua = navigator.userAgent;
+	const isWebKit = /AppleWebKit/i.test(ua) && !/(Chrome|Edg|OPR|CriOS|FxiOS)/i.test(ua);
+	const isVision = /\b(visionos|apple\s?vision\s?pro)\b/i.test(ua);
+
+	if (isWebKit || isVision) {
+		// Force the same behavior as the @supports block
+		document.querySelectorAll('.range-value-label').forEach(el => el.style.display = 'none');
+		const ticks = document.getElementById('voltage-ticks');
+		if (ticks) ticks.style.display = 'block';
+	}
+	})();
+	</script>
+
+
+	
+		
 
 	</body>
 </html>

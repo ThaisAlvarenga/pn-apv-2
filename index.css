@@ -26,6 +26,7 @@ body {
   .range-value-label {
     color: #ffffff;
     font-size: 1rem;
+    z-index: 0;   
   }
 
 @media (max-width: 992px) {
@@ -218,6 +219,7 @@ body {
 .sliderContainer {
 	margin-top: 32px;
 	margin-bottom: 32px;
+  position: relative;
 }
 
 .sliderLabel {
@@ -277,6 +279,48 @@ datalist {
 datalist option {
 	font-size: 0.8rem;
 }
+
+
+/* --- Custom tick row under the slider (for Safari / Apple Vision) --- */
+.ticks {
+  position: relative;
+  height: 1.5rem;
+  margin-top: 0.35rem;
+  width: 240px;               /* match your slider width */
+  display: none;              /* hidden by default (Chrome uses your current labels) */
+  z-index: 2;
+}
+
+.ticks .tick {
+  position: absolute;
+  transform: translateX(-50%);
+  font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: #fff;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ticks .tick::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -0.5rem;
+  width: 1px;
+  height: 6px;
+  background: #aaa;
+  transform: translateX(-50%);
+  opacity: 0.8;
+}
+
+/* Show custom ticks + hide your existing datalist labels ONLY on WebKit (Safari/visionOS).
+   This prevents double labels on Chrome while fixing Safari/AVP. */
+@supports (-webkit-touch-callout: none) {
+  .ticks { display: block; }
+  .range-value-label { display: none; }
+}
+
+
+
 
 @font-face {
   font-family: "Agency FB";
