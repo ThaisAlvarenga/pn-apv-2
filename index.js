@@ -129,247 +129,216 @@ const loader = new FontLoader();
 var scene = new THREE.Scene();
 
 
-// ========================= Wrist Slider (left wrist, right-hand ray) =========================
+// ========================= Wrist Slider (left wrist; right-hand pinch) =========================
 
-// CONFIG
-const SL_MIN = -1.4;
-const SL_MAX =  0.4;
-const SL_TRACK_M = 0.18; // 18 cm
+// --- Config
+const SLIDER_MIN = -1.4;
+const SLIDER_MAX =  0.4;
+const TRACK_LEN_M = 0.18;         // ~18 cm
+const PINCH_THRESHOLD_M = 0.018;  // ~1.8 cm
 
-// Scene nodes
-const ws = {
-  root: new THREE.Object3D(),  // follows left wrist / left grip
-  tilt: new THREE.Object3D(),  // reserved (extra tilt)
-  panel: new THREE.Object3D(), // UI container
-  track: null,
-  knob: null,
-  labelMesh: null,
-  labelTex: null,
-};
+// --- State shared with your sim
+let sliderValue = 0.0;   // will drive `voltage`
 
-// State
-let ws_value = 0.0;                     // current slider value (volts)
-let ws_dragging = false;                // dragging with right select?
-let ws_dragController = null;           // which controller is dragging
-let ws_refSpace = null;                 // 'local-floor'
-let ws_leftHand = null;                 // XRInputSource for left hand (if any)
-let ws_rightController = null;          // THREE.Object3D for right controller (ray origin)
-const ws_ray = new THREE.Raycaster();   // raycaster for hover/drag
-const _tmpMat = new THREE.Matrix4();
+// --- Scene nodes
+const sliderRoot  = new THREE.Object3D(); // follows left wrist (fallback: left grip)
+const sliderTilt  = new THREE.Object3D(); // keep an extra tilt node if you want
+const sliderPanel = new THREE.Object3D(); // holds track/knob/label
 
-// helpers for mapping value <-> x along track
-const v2x = (v) => THREE.MathUtils.mapLinear(v, SL_MIN, SL_MAX, -SL_TRACK_M/2, SL_TRACK_M/2);
-const x2v = (x) => THREE.MathUtils.clamp(
-  THREE.MathUtils.mapLinear(x, -SL_TRACK_M/2, SL_TRACK_M/2, SL_MIN, SL_MAX),
-  SL_MIN, SL_MAX
+let sliderTrack = null;
+let sliderKnob  = null;
+
+let labelCanvas, labelCtx, labelTex, labelMesh;
+
+// helpers: map value <-> local X along the track
+const valueToX = (v) => THREE.MathUtils.mapLinear(v, SLIDER_MIN, SLIDER_MAX, -TRACK_LEN_M/2, TRACK_LEN_M/2);
+const xToValue = (x) => THREE.MathUtils.clamp(
+  THREE.MathUtils.mapLinear(x, -TRACK_LEN_M/2, TRACK_LEN_M/2, SLIDER_MIN, SLIDER_MAX),
+  SLIDER_MIN, SLIDER_MAX
 );
 
-// public accessors (optional)
-function getVoltageFromWristSlider() { return ws_value; }
-function setVoltageOnWristSlider(v) {
-  ws_value = THREE.MathUtils.clamp(v, SL_MIN, SL_MAX);
-  if (ws.knob) ws.knob.position.x = v2x(ws_value);
-  drawVoltageLabel(ws_value);
+// refs to XR state
+let xrRefSpace_local = null;
+let leftHandSource   = null;
+let rightHandSource  = null;
+
+// utility: find a specific hand source each frame (robust on AVP/Quest)
+function findHand(session, handedness) {
+  if (!session) return null;
+  for (const src of session.inputSources) {
+    if (src.hand && src.handedness === handedness) return src;
+  }
+  return null;
 }
 
-// build UI pieces
-function buildWristSliderUI() {
-  // panel root
-  scene.add(ws.root);
-  ws.root.add(ws.tilt);
-  ws.tilt.add(ws.panel);
+function updateLeftRightHandSources(session) {
+  leftHandSource  = findHand(session, 'left');
+  rightHandSource = findHand(session, 'right');
+}
 
-  // background
+// Build slider UI and register XR listeners
+function initWristSlider() {
+  // add nodes
+  scene.add(sliderRoot);
+  sliderRoot.add(sliderTilt);
+  sliderTilt.add(sliderPanel);
+
+  // backing
   const bg = new THREE.Mesh(
     new THREE.PlaneGeometry(0.22, 0.10),
     new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45 })
   );
   bg.position.z = -0.001;
-  ws.panel.add(bg);
+  sliderPanel.add(bg);
 
   // track
-  ws.track = new THREE.Mesh(
-    new THREE.PlaneGeometry(SL_TRACK_M, 0.02),
+  sliderTrack = new THREE.Mesh(
+    new THREE.PlaneGeometry(TRACK_LEN_M, 0.02),
     new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.85 })
   );
-  ws.panel.add(ws.track);
+  sliderPanel.add(sliderTrack);
 
   // knob
-  ws.knob = new THREE.Mesh(
+  sliderKnob = new THREE.Mesh(
     new THREE.CircleGeometry(0.015, 32),
     new THREE.MeshBasicMaterial({ color: 0xffcc66 })
   );
-  ws.knob.position.z = 0.001;
-  ws.panel.add(ws.knob);
+  sliderKnob.position.set(valueToX(sliderValue), 0, 0.001);
+  sliderPanel.add(sliderKnob);
 
   // label (canvas)
-  const cvs = document.createElement('canvas');
-  cvs.width = 1024; cvs.height = 256;
-  ws.labelTex = new THREE.CanvasTexture(cvs);
-  ws.labelTex.colorSpace = THREE.SRGBColorSpace;
-  ws.labelTex.minFilter = THREE.LinearFilter;
-  ws.labelTex.magFilter = THREE.LinearFilter;
+  labelCanvas = document.createElement('canvas');
+  labelCanvas.width = 1024; labelCanvas.height = 256;
+  labelCtx = labelCanvas.getContext('2d');
 
-  ws.labelMesh = new THREE.Mesh(
+  labelTex = new THREE.CanvasTexture(labelCanvas);
+  labelTex.colorSpace = THREE.SRGBColorSpace;
+  labelTex.minFilter = THREE.LinearFilter;
+  labelTex.magFilter = THREE.LinearFilter;
+
+  labelMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(0.30, 0.09),
-    new THREE.MeshBasicMaterial({
-      map: ws.labelTex,
-      transparent: true,
-      depthTest: false,
-      depthWrite: false
-    })
+    new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, depthTest: false, depthWrite: false })
   );
-  ws.labelMesh.position.set(0, 0.09, 0.006);
-  ws.panel.add(ws.labelMesh);
-  ws.labelCanvas = cvs;
-  ws.labelCtx = cvs.getContext('2d');
+  labelMesh.position.set(0, 0.09, 0.006);
+  sliderPanel.add(labelMesh);
 
-  // local placement & tilt (so it’s easy to see on wrist)
-  ws.panel.position.set(0.07, 0.02, -0.05);
-  ws.panel.rotation.set(
-    THREE.MathUtils.degToRad(45),  // tilt up
-    THREE.MathUtils.degToRad(25),  // yaw toward user’s right
-    THREE.MathUtils.degToRad(-90)  // flat on forearm
+  // local placement near the wrist (tweak to taste)
+  sliderPanel.position.set(0.07, 0.02, -0.05);
+  sliderPanel.rotation.set(
+    THREE.MathUtils.degToRad(45),   // tilt up
+    THREE.MathUtils.degToRad(25),   // yaw toward right
+    THREE.MathUtils.degToRad(-90)   // lay flat along forearm
   );
 
-  // init visuals
-  ws.knob.position.x = v2x(ws_value);
-  drawVoltageLabel(ws_value);
+  drawVoltageLabel(sliderValue);
+
+  // XR session lifecycle
+  renderer.xr.addEventListener('sessionstart', async () => {
+    const s = renderer.xr.getSession();
+    try { xrRefSpace_local = await s.requestReferenceSpace('local-floor'); } catch {}
+    updateLeftRightHandSources(s);
+    s.addEventListener('inputsourceschange', () => updateLeftRightHandSources(s));
+  });
+
+  renderer.xr.addEventListener('sessionend', () => {
+    xrRefSpace_local = null;
+    leftHandSource = rightHandSource = null;
+  });
 }
 
 function drawVoltageLabel(v) {
-  if (!ws.labelCtx) return;
-  const ctx = ws.labelCtx;
-  const W = ws.labelCanvas.width, H = ws.labelCanvas.height;
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(0,0,W,H);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 120px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(`Voltage: ${v.toFixed(2)} V`, W/2, H/2);
-  ws.labelTex.needsUpdate = true;
+  if (!labelCtx) return;
+  const W = labelCanvas.width, H = labelCanvas.height;
+  labelCtx.clearRect(0,0,W,H);
+  labelCtx.fillStyle = 'rgba(0,0,0,0.55)';
+  labelCtx.fillRect(0,0,W,H);
+  labelCtx.fillStyle = '#ffffff';
+  labelCtx.font = 'bold 120px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+  labelCtx.textAlign = 'center';
+  labelCtx.textBaseline = 'middle';
+  labelCtx.fillText(`Voltage: ${v.toFixed(2)} V`, W/2, H/2);
+  labelTex.needsUpdate = true;
 }
 
-// pose the slider root at left wrist (fallback: left controller grip(0))
-function updateLeftWristPose(frame) {
+// Pose the slider at the left wrist (fallback: left controller grip)
+const _tmpObj = new THREE.Object3D();
+function updateSliderPose(frame) {
   const session = renderer.xr.getSession?.();
-  if (!session || !ws_refSpace) { ws.root.visible = false; return; }
+  if (!session) { sliderRoot.visible = false; return; }
 
-  // Try left hand
-  if (!ws_leftHand) {
-    for (const src of session.inputSources) {
-      if (src.hand && src.handedness === 'left') { ws_leftHand = src; break; }
-    }
-  }
-  if (ws_leftHand && ws_leftHand.hand) {
-    const ht = ws_leftHand.hand;
+  // Prefer hand wrist
+  if (leftHandSource && leftHandSource.hand && xrRefSpace_local) {
+    const ht = leftHandSource.hand;
     const wrist = ht.get?.('wrist') || (typeof XRHand!=='undefined' && ht[XRHand.WRIST]);
     if (wrist) {
-      const pose = frame.getJointPose(wrist, ws_refSpace);
+      const pose = frame.getJointPose(wrist, xrRefSpace_local);
       if (pose) {
         const t = pose.transform;
-        ws.root.position.set(t.position.x, t.position.y, t.position.z);
-        ws.root.quaternion.set(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w);
-        ws.root.visible = true;
+        sliderRoot.position.set(t.position.x, t.position.y, t.position.z);
+        sliderRoot.quaternion.set(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w);
+        sliderRoot.visible = true;
         return;
       }
     }
   }
 
   // Fallback: left controller grip(0)
-  const grip0 = renderer.xr.getControllerGrip?.(0);
-  if (grip0) {
-    grip0.matrixWorld.decompose(ws.root.position, ws.root.quaternion, ws.root.scale);
-    ws.root.visible = true;
+  const grip = renderer.xr.getControllerGrip?.(0);
+  if (grip) {
+    _tmpObj.matrix.copy(grip.matrixWorld);
+    _tmpObj.matrix.decompose(sliderRoot.position, sliderRoot.quaternion, sliderRoot.scale);
+    sliderRoot.visible = true;
     return;
   }
 
-  ws.root.visible = false;
+  sliderRoot.visible = false;
 }
 
-// helper: raycast from a controller into knob/track
-function intersectSlider(ctrlObj) {
-  _tmpMat.identity().extractRotation(ctrlObj.matrixWorld);
-  ws_ray.ray.origin.setFromMatrixPosition(ctrlObj.matrixWorld);
-  ws_ray.ray.direction.set(0,0,-1).applyMatrix4(_tmpMat);
+// Right-hand pinch to drag along the track
+function updateSliderInteraction(frame) {
+  if (!xrRefSpace_local) return;
+  const session = renderer.xr.getSession?.();
+  if (!session) return;
 
-  const hits = ws_ray.intersectObjects([ws.knob, ws.track], false);
-  return hits.length ? hits[0] : null;
+  const rhs = findHand(session, 'right') || rightHandSource;
+  if (!rhs || !rhs.hand) return;
+
+  const ht = rhs.hand;
+  const tipIndex = ht.get?.('index-finger-tip') || (typeof XRHand!=='undefined' && ht[XRHand.INDEX_PHALANX_TIP]);
+  const tipThumb = ht.get?.('thumb-tip')        || (typeof XRHand!=='undefined' && ht[XRHand.THUMB_PHALANX_TIP]);
+  if (!tipIndex || !tipThumb) return;
+
+  const pI = frame.getJointPose(tipIndex, xrRefSpace_local);
+  const pT = frame.getJointPose(tipThumb, xrRefSpace_local);
+  if (!pI || !pT) return;
+
+  const dx = pI.transform.position.x - pT.transform.position.x;
+  const dy = pI.transform.position.y - pT.transform.position.y;
+  const dz = pI.transform.position.z - pT.transform.position.z;
+  const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  const pinching = dist < PINCH_THRESHOLD_M;
+  if (!pinching) return;
+
+  // Project index tip to the slider's local space
+  const idxWorld = new THREE.Vector3(
+    pI.transform.position.x,
+    pI.transform.position.y,
+    pI.transform.position.z
+  );
+  const local = sliderPanel.worldToLocal(idxWorld.clone());
+
+  // Clamp to track, set value, move knob
+  const clampedX = THREE.MathUtils.clamp(local.x, -TRACK_LEN_M/2, TRACK_LEN_M/2);
+  sliderValue = xToValue(clampedX);
+  sliderKnob.position.x = THREE.MathUtils.lerp(sliderKnob.position.x, clampedX, 0.35);
+  drawVoltageLabel(sliderValue);
 }
 
-// Right-hand “select” starts dragging only if we’re pointing at the slider
-function onRightSelectStart(e) {
-  const ctrlObj = e.target; // THREE.Object3D for this controller
-  if (ctrlObj !== ws_rightController) return; // only right-hand
+// Accessor (if you want it)
+function getSliderValue() { return sliderValue; }
 
-  const hit = intersectSlider(ctrlObj);
-  if (hit) {
-    ws_dragging = true;
-    ws_dragController = ctrlObj;
-  }
-}
-function onRightSelectEnd(e) {
-  if (e.target === ws_dragController) {
-    ws_dragging = false;
-    ws_dragController = null;
-  }
-}
 
-// while dragging: project controller’s ray hit to local panel X and convert to value
-function updateDrag() {
-  if (!ws_dragging || !ws_dragController) return;
-  const hit = intersectSlider(ws_dragController);
-  if (!hit) return;
-
-  const local = ws.panel.worldToLocal(hit.point.clone());
-  const clampedX = THREE.MathUtils.clamp(local.x, -SL_TRACK_M/2, SL_TRACK_M/2);
-
-  ws_value = x2v(clampedX);
-  ws.knob.position.x = THREE.MathUtils.lerp(ws.knob.position.x, clampedX, 0.45);
-  drawVoltageLabel(ws_value);
-}
-
-// PUBLIC API to init and tick
-function initWristSlider() {
-  buildWristSliderUI();
-
-  // XR session setup
-  renderer.xr.addEventListener('sessionstart', async () => {
-    const s = renderer.xr.getSession();
-    ws_refSpace = await s.requestReferenceSpace('local-floor');
-
-    // discover right controller object for ray origin
-    ws_rightController = renderer.xr.getController?.(1); // index 1 = right (typical)
-    if (ws_rightController) {
-      ws_rightController.addEventListener('selectstart', onRightSelectStart);
-      ws_rightController.addEventListener('selectend',   onRightSelectEnd);
-    }
-
-    s.addEventListener('inputsourceschange', () => {
-      ws_leftHand = null; // force re-scan next frame
-    });
-  });
-
-  renderer.xr.addEventListener('sessionend', () => {
-    ws_refSpace = null;
-    ws_leftHand = null;
-    ws_dragging = false;
-    ws_dragController = null;
-  });
-}
-
-function tickWristSlider(frame) {
-  // follow wrist/grip
-  updateLeftWristPose(frame);
-
-  // controller drag
-  updateDrag();
-
-  // hand-tracking pinch (optional): skip per your spec (right-hand click only)
-  // If you later want pinch, it can be added here.
-}
 
 
 init();
@@ -437,10 +406,12 @@ function init() {
     renderer.xr.setReferenceSpaceType('local-floor');
     initXR();
     container.appendChild( renderer.domElement );
-	container.appendChild(XRButton.createButton(renderer));
+	container.appendChild(XRButton.createButton(renderer, {
+  requiredFeatures: ['local-floor'],
+  optionalFeatures: ['hand-tracking']   // <-- AVP/Quest-hands
+}));
 	dolly = new THREE.Object3D();
 	setUpVRControls();
-
     initWristSlider();
 
 
@@ -802,6 +773,15 @@ function update() {
     renderer.setAnimationLoop( function(timestamp, frame) {        
         updateXRControllerStates(frame);
 
+        // wrist slider updates (pose + interaction)
+  updateSliderPose(frame);
+  updateSliderInteraction(frame);
+
+  //  use slider as the source of truth for voltage
+  voltage = sliderValue;
+  const myTextEl = document.getElementById('myText');
+  if (myTextEl) myTextEl.textContent = voltage.toFixed(2);
+
         var currentTime = performance.now();
         var time = clock.getDelta()/15;
         scene.remove(innerCube);
@@ -874,21 +854,10 @@ function update() {
             negative_battery_anim();
         }
 
-
-
         //UPDATE SPHERE POSITION
         updateSpherePosition();
         checkBounds(holeSpheres, electronSpheres, boxMin, boxMax);
-
-         tickWristSlider(frame);                // <-- update wrist pose + drag
-  voltage = getVoltageFromWristSlider(); // <-- use slider to drive the sim
-  const vEl = document.getElementById('myText');
-  if (vEl) vEl.textContent = voltage.toFixed(2);
-setVoltageOnWristSlider(voltage);
-
 		updateCamera();
-
-
         renderer.render( scene, camera );
 		
     });
@@ -977,7 +946,6 @@ function setUpVRControls() {
     controllerGrip1.add(controllerModelFactory.createControllerModel(controllerGrip1));
     controllerGrip2.add(controllerModelFactory.createControllerModel(controllerGrip2));
     
-    
     // Add controllers to dolly
     dolly.add(controller1);
     dolly.add(controller2);
@@ -987,10 +955,10 @@ function setUpVRControls() {
 
 // Handle controller input
 async function initXR(frame) {
-    const xrSession = await navigator.xr.requestSession('immersive-vr');
+    // const xrSession = await navigator.xr.requestSession('immersive-vr');
 
-    const inputSource = xrSession.inputSources[0];
-	controllerGrip1 = xrSession.requestReferenceSpace('local');
+    // const inputSource = xrSession.inputSources[0];
+	// controllerGrip1 = xrSession.requestReferenceSpace('local');
 }
 
 function updateCamera() {
