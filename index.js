@@ -152,6 +152,32 @@ let sliderKnob  = null;
 
 let labelCanvas, labelCtx, labelTex, labelMesh;
 
+//gizmo to see exactly where we’re anchoring the slider
+const rayDot = new THREE.Mesh(
+  new THREE.SphereGeometry(0.008, 12, 12),
+  new THREE.MeshBasicMaterial({ color: 0x66ff88 })
+);
+sliderRoot.add(rayDot); // it sits at (0,0,0) of sliderRoot
+
+function getLeftTargetRayPose(frame, refSpace) {
+  const session = renderer.xr.getSession?.();
+  if (!session || !refSpace) return null;
+
+  // Prefer a true left hand; else left controller; else any 'left' source
+  let best = null;
+  for (const src of session.inputSources) {
+    if (src.handedness === 'left') {
+      best = src;
+      if (src.hand) break; // prefer hands if available
+    }
+  }
+  if (!best) return null;
+
+  // For both hands & controllers, targetRaySpace is the aiming ray
+  const pose = frame.getPose(best.targetRaySpace, refSpace);
+  return pose || null;
+}
+
 // helpers: map value <-> local X along the track
 const valueToX = (v) => THREE.MathUtils.mapLinear(v, SLIDER_MIN, SLIDER_MAX, -TRACK_LEN_M/2, TRACK_LEN_M/2);
 const xToValue = (x) => THREE.MathUtils.clamp(
@@ -265,37 +291,79 @@ function drawVoltageLabel(v) {
 
 // Pose the slider at the left wrist (fallback: left controller grip)
 const _tmpObj = new THREE.Object3D();
+
+// tune these if you want the panel a bit closer/farther & smoother
+const RAY_FORWARD_OFFSET_M = 0.10;   // 10 cm along the ray forward from the origin
+const POSE_SMOOTH_ALPHA    = 0.35;   // 0..1 (higher = snappier)
+
+// temp reuse
+const _rayDir = new THREE.Vector3();
+const _rayQuat = new THREE.Quaternion();
+const _rayMat4 = new THREE.Matrix4();
+const _smoothedPos = new THREE.Vector3();
+const _smoothedQuat = new THREE.Quaternion();
+
+let _hasLastPose = false;
+
 function updateSliderPose(frame) {
-  const session = renderer.xr.getSession?.();
-  if (!session) { sliderRoot.visible = false; return; }
+  if (!frame || !xrRefSpace_local) { sliderRoot.visible = false; return; }
 
-  // Prefer hand wrist
-  if (leftHandSource && leftHandSource.hand && xrRefSpace_local) {
-    const ht = leftHandSource.hand;
-    const wrist = ht.get?.('wrist') || (typeof XRHand!=='undefined' && ht[XRHand.WRIST]);
-    if (wrist) {
-      const pose = frame.getJointPose(wrist, xrRefSpace_local);
-      if (pose) {
-        const t = pose.transform;
-        sliderRoot.position.set(t.position.x, t.position.y, t.position.z);
-        sliderRoot.quaternion.set(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w);
-        sliderRoot.visible = true;
-        return;
-      }
+  // 1) Try left target ray pose (works for AVP hands & normal controllers)
+  const rayPose = getLeftTargetRayPose(frame, xrRefSpace_local);
+
+  if (rayPose) {
+    const t = rayPose.transform;
+
+    // unpack orientation → forward dir (-Z in local ray space)
+    _rayQuat.set(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w);
+    _rayMat4.makeRotationFromQuaternion(_rayQuat);
+    _rayDir.set(0, 0, -1).applyMatrix4(_rayMat4).normalize();
+
+    // desired world position: ray origin + forward * offset
+    const desiredPos = new THREE.Vector3(
+      t.position.x + _rayDir.x * RAY_FORWARD_OFFSET_M,
+      t.position.y + _rayDir.y * RAY_FORWARD_OFFSET_M,
+      t.position.z + _rayDir.z * RAY_FORWARD_OFFSET_M
+    );
+
+    // desired world orientation = ray orientation (so the panel faces along the ray)
+    const desiredQuat = _rayQuat;
+
+    if (!_hasLastPose) {
+      // first time: snap
+      sliderRoot.position.copy(desiredPos);
+      sliderRoot.quaternion.copy(desiredQuat);
+      _hasLastPose = true;
+    } else {
+      // smooth
+      _smoothedPos.copy(sliderRoot.position).lerp(desiredPos, POSE_SMOOTH_ALPHA);
+      sliderRoot.position.copy(_smoothedPos);
+
+      THREE.Quaternion.slerp(sliderRoot.quaternion, desiredQuat, _smoothedQuat, POSE_SMOOTH_ALPHA);
+      sliderRoot.quaternion.copy(_smoothedQuat);
     }
-  }
 
-  // Fallback: left controller grip(0)
-  const grip = renderer.xr.getControllerGrip?.(0);
-  if (grip) {
-    _tmpObj.matrix.copy(grip.matrixWorld);
-    _tmpObj.matrix.decompose(sliderRoot.position, sliderRoot.quaternion, sliderRoot.scale);
     sliderRoot.visible = true;
     return;
   }
 
+  // 2) Fallback: left controller grip(0) if ray pose not available
+  const grip = renderer.xr.getControllerGrip?.(0);
+  if (grip) {
+    _tmpObj.matrix.copy(grip.matrixWorld);
+    _tmpObj.matrix.decompose(sliderRoot.position, sliderRoot.quaternion, sliderRoot.scale);
+    // nudge forward a bit in its -Z so it doesn't intersect the grip model
+    sliderRoot.translateZ(-RAY_FORWARD_OFFSET_M);
+    sliderRoot.visible = true;
+    _hasLastPose = true;
+    return;
+  }
+
+  // 3) If nothing, hide
   sliderRoot.visible = false;
+  _hasLastPose = false;
 }
+
 
 // Right-hand pinch to drag along the track
 function updateSliderInteraction(frame) {
