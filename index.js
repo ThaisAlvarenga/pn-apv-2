@@ -128,6 +128,250 @@ const vrSettings = {
 const loader = new FontLoader();
 var scene = new THREE.Scene();
 
+
+// ========================= Wrist Slider (left wrist, right-hand ray) =========================
+
+// CONFIG
+const SL_MIN = -1.4;
+const SL_MAX =  0.4;
+const SL_TRACK_M = 0.18; // 18 cm
+
+// Scene nodes
+const ws = {
+  root: new THREE.Object3D(),  // follows left wrist / left grip
+  tilt: new THREE.Object3D(),  // reserved (extra tilt)
+  panel: new THREE.Object3D(), // UI container
+  track: null,
+  knob: null,
+  labelMesh: null,
+  labelTex: null,
+};
+
+// State
+let ws_value = 0.0;                     // current slider value (volts)
+let ws_dragging = false;                // dragging with right select?
+let ws_dragController = null;           // which controller is dragging
+let ws_refSpace = null;                 // 'local-floor'
+let ws_leftHand = null;                 // XRInputSource for left hand (if any)
+let ws_rightController = null;          // THREE.Object3D for right controller (ray origin)
+const ws_ray = new THREE.Raycaster();   // raycaster for hover/drag
+const _tmpMat = new THREE.Matrix4();
+
+// helpers for mapping value <-> x along track
+const v2x = (v) => THREE.MathUtils.mapLinear(v, SL_MIN, SL_MAX, -SL_TRACK_M/2, SL_TRACK_M/2);
+const x2v = (x) => THREE.MathUtils.clamp(
+  THREE.MathUtils.mapLinear(x, -SL_TRACK_M/2, SL_TRACK_M/2, SL_MIN, SL_MAX),
+  SL_MIN, SL_MAX
+);
+
+// public accessors (optional)
+function getVoltageFromWristSlider() { return ws_value; }
+function setVoltageOnWristSlider(v) {
+  ws_value = THREE.MathUtils.clamp(v, SL_MIN, SL_MAX);
+  if (ws.knob) ws.knob.position.x = v2x(ws_value);
+  drawVoltageLabel(ws_value);
+}
+
+// build UI pieces
+function buildWristSliderUI() {
+  // panel root
+  scene.add(ws.root);
+  ws.root.add(ws.tilt);
+  ws.tilt.add(ws.panel);
+
+  // background
+  const bg = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.22, 0.10),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45 })
+  );
+  bg.position.z = -0.001;
+  ws.panel.add(bg);
+
+  // track
+  ws.track = new THREE.Mesh(
+    new THREE.PlaneGeometry(SL_TRACK_M, 0.02),
+    new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.85 })
+  );
+  ws.panel.add(ws.track);
+
+  // knob
+  ws.knob = new THREE.Mesh(
+    new THREE.CircleGeometry(0.015, 32),
+    new THREE.MeshBasicMaterial({ color: 0xffcc66 })
+  );
+  ws.knob.position.z = 0.001;
+  ws.panel.add(ws.knob);
+
+  // label (canvas)
+  const cvs = document.createElement('canvas');
+  cvs.width = 1024; cvs.height = 256;
+  ws.labelTex = new THREE.CanvasTexture(cvs);
+  ws.labelTex.colorSpace = THREE.SRGBColorSpace;
+  ws.labelTex.minFilter = THREE.LinearFilter;
+  ws.labelTex.magFilter = THREE.LinearFilter;
+
+  ws.labelMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.30, 0.09),
+    new THREE.MeshBasicMaterial({
+      map: ws.labelTex,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false
+    })
+  );
+  ws.labelMesh.position.set(0, 0.09, 0.006);
+  ws.panel.add(ws.labelMesh);
+  ws.labelCanvas = cvs;
+  ws.labelCtx = cvs.getContext('2d');
+
+  // local placement & tilt (so it’s easy to see on wrist)
+  ws.panel.position.set(0.07, 0.02, -0.05);
+  ws.panel.rotation.set(
+    THREE.MathUtils.degToRad(45),  // tilt up
+    THREE.MathUtils.degToRad(25),  // yaw toward user’s right
+    THREE.MathUtils.degToRad(-90)  // flat on forearm
+  );
+
+  // init visuals
+  ws.knob.position.x = v2x(ws_value);
+  drawVoltageLabel(ws_value);
+}
+
+function drawVoltageLabel(v) {
+  if (!ws.labelCtx) return;
+  const ctx = ws.labelCtx;
+  const W = ws.labelCanvas.width, H = ws.labelCanvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 120px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`Voltage: ${v.toFixed(2)} V`, W/2, H/2);
+  ws.labelTex.needsUpdate = true;
+}
+
+// pose the slider root at left wrist (fallback: left controller grip(0))
+function updateLeftWristPose(frame) {
+  const session = renderer.xr.getSession?.();
+  if (!session || !ws_refSpace) { ws.root.visible = false; return; }
+
+  // Try left hand
+  if (!ws_leftHand) {
+    for (const src of session.inputSources) {
+      if (src.hand && src.handedness === 'left') { ws_leftHand = src; break; }
+    }
+  }
+  if (ws_leftHand && ws_leftHand.hand) {
+    const ht = ws_leftHand.hand;
+    const wrist = ht.get?.('wrist') || (typeof XRHand!=='undefined' && ht[XRHand.WRIST]);
+    if (wrist) {
+      const pose = frame.getJointPose(wrist, ws_refSpace);
+      if (pose) {
+        const t = pose.transform;
+        ws.root.position.set(t.position.x, t.position.y, t.position.z);
+        ws.root.quaternion.set(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w);
+        ws.root.visible = true;
+        return;
+      }
+    }
+  }
+
+  // Fallback: left controller grip(0)
+  const grip0 = renderer.xr.getControllerGrip?.(0);
+  if (grip0) {
+    grip0.matrixWorld.decompose(ws.root.position, ws.root.quaternion, ws.root.scale);
+    ws.root.visible = true;
+    return;
+  }
+
+  ws.root.visible = false;
+}
+
+// helper: raycast from a controller into knob/track
+function intersectSlider(ctrlObj) {
+  _tmpMat.identity().extractRotation(ctrlObj.matrixWorld);
+  ws_ray.ray.origin.setFromMatrixPosition(ctrlObj.matrixWorld);
+  ws_ray.ray.direction.set(0,0,-1).applyMatrix4(_tmpMat);
+
+  const hits = ws_ray.intersectObjects([ws.knob, ws.track], false);
+  return hits.length ? hits[0] : null;
+}
+
+// Right-hand “select” starts dragging only if we’re pointing at the slider
+function onRightSelectStart(e) {
+  const ctrlObj = e.target; // THREE.Object3D for this controller
+  if (ctrlObj !== ws_rightController) return; // only right-hand
+
+  const hit = intersectSlider(ctrlObj);
+  if (hit) {
+    ws_dragging = true;
+    ws_dragController = ctrlObj;
+  }
+}
+function onRightSelectEnd(e) {
+  if (e.target === ws_dragController) {
+    ws_dragging = false;
+    ws_dragController = null;
+  }
+}
+
+// while dragging: project controller’s ray hit to local panel X and convert to value
+function updateDrag() {
+  if (!ws_dragging || !ws_dragController) return;
+  const hit = intersectSlider(ws_dragController);
+  if (!hit) return;
+
+  const local = ws.panel.worldToLocal(hit.point.clone());
+  const clampedX = THREE.MathUtils.clamp(local.x, -SL_TRACK_M/2, SL_TRACK_M/2);
+
+  ws_value = x2v(clampedX);
+  ws.knob.position.x = THREE.MathUtils.lerp(ws.knob.position.x, clampedX, 0.45);
+  drawVoltageLabel(ws_value);
+}
+
+// PUBLIC API to init and tick
+function initWristSlider() {
+  buildWristSliderUI();
+
+  // XR session setup
+  renderer.xr.addEventListener('sessionstart', async () => {
+    const s = renderer.xr.getSession();
+    ws_refSpace = await s.requestReferenceSpace('local-floor');
+
+    // discover right controller object for ray origin
+    ws_rightController = renderer.xr.getController?.(1); // index 1 = right (typical)
+    if (ws_rightController) {
+      ws_rightController.addEventListener('selectstart', onRightSelectStart);
+      ws_rightController.addEventListener('selectend',   onRightSelectEnd);
+    }
+
+    s.addEventListener('inputsourceschange', () => {
+      ws_leftHand = null; // force re-scan next frame
+    });
+  });
+
+  renderer.xr.addEventListener('sessionend', () => {
+    ws_refSpace = null;
+    ws_leftHand = null;
+    ws_dragging = false;
+    ws_dragController = null;
+  });
+}
+
+function tickWristSlider(frame) {
+  // follow wrist/grip
+  updateLeftWristPose(frame);
+
+  // controller drag
+  updateDrag();
+
+  // hand-tracking pinch (optional): skip per your spec (right-hand click only)
+  // If you later want pinch, it can be added here.
+}
+
+
 init();
 
 update();
@@ -196,6 +440,8 @@ function init() {
 	container.appendChild(XRButton.createButton(renderer));
 	dolly = new THREE.Object3D();
 	setUpVRControls();
+
+    initWristSlider();
 
 
      // Add explicit size check
@@ -628,10 +874,21 @@ function update() {
             negative_battery_anim();
         }
 
+
+
         //UPDATE SPHERE POSITION
         updateSpherePosition();
         checkBounds(holeSpheres, electronSpheres, boxMin, boxMax);
+
+         tickWristSlider(frame);                // <-- update wrist pose + drag
+  voltage = getVoltageFromWristSlider(); // <-- use slider to drive the sim
+  const vEl = document.getElementById('myText');
+  if (vEl) vEl.textContent = voltage.toFixed(2);
+setVoltageOnWristSlider(voltage);
+
 		updateCamera();
+
+
         renderer.render( scene, camera );
 		
     });
@@ -719,6 +976,7 @@ function setUpVRControls() {
     
     controllerGrip1.add(controllerModelFactory.createControllerModel(controllerGrip1));
     controllerGrip2.add(controllerModelFactory.createControllerModel(controllerGrip2));
+    
     
     // Add controllers to dolly
     dolly.add(controller1);
@@ -832,6 +1090,16 @@ function onSelectStart() {
 function onSelectEnd() {
     this.userData.isSelecting = false;
 }
+
+
+
+
+
+
+
+
+
+
 
 	
 function negative_battery_anim() {
