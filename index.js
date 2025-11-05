@@ -137,6 +137,8 @@ const SLIDER_MAX =  0.4;
 const TRACK_LEN_M = 0.18;         // ~18 cm
 const PINCH_THRESHOLD_M = 0.018;  // ~1.8 cm
 
+
+
 // --- State shared with your sim
 let sliderValue = 0.0;   // will drive `voltage`
 
@@ -403,8 +405,50 @@ function updateSliderInteraction(frame) {
   drawVoltageLabel(sliderValue);
 }
 
-// Accessor (if you want it)
+// Accessor (if want it)
 function getSliderValue() { return sliderValue; }
+
+
+
+// --- Pinch thresholds (meters)
+const SELECT_PINCH_M = 0.018;  // ~18 mm: UI select
+const NAV_PINCH_M    = 0.010;  // ~10 mm: deeper pinch required for locomotion
+
+// Cache of right-hand pinch state each frame
+let _rightPinchDist = Infinity;
+let _rightPinch     = false;   // select level
+let _rightDeepPinch = false;   // locomotion level
+
+function getRightPinchDistance(frame) {
+  if (!xrRefSpace_local) return Infinity;
+  const session = renderer.xr.getSession?.();
+  if (!session) return Infinity;
+
+  const rhs = (function findHand() {
+    for (const src of session.inputSources) {
+      if (src.hand && src.handedness === 'right') return src;
+    }
+    return null;
+  })();
+  if (!rhs || !rhs.hand) return Infinity;
+
+  const ht = rhs.hand;
+  const tipIndex = ht.get?.('index-finger-tip') || (typeof XRHand!=='undefined' && ht[XRHand.INDEX_PHALANX_TIP]);
+  const tipThumb = ht.get?.('thumb-tip')        || (typeof XRHand!=='undefined' && ht[XRHand.THUMB_PHALANX_TIP]);
+  if (!tipIndex || !tipThumb) return Infinity;
+
+  const pI = frame.getJointPose(tipIndex, xrRefSpace_local);
+  const pT = frame.getJointPose(tipThumb, xrRefSpace_local);
+  if (!pI || !pT) return Infinity;
+
+  const dx = pI.transform.position.x - pT.transform.position.x;
+  const dy = pI.transform.position.y - pT.transform.position.y;
+  const dz = pI.transform.position.z - pT.transform.position.z;
+  return Math.sqrt(dx*dx + dy*dy + dz*dz);
+}
+
+
+
 
 
 
@@ -1074,47 +1118,52 @@ function updateCamera() {
         dolly.rotation.y -= rotationInput * vrSettings.rotationSpeed;
     }
 
+    // wrist slider updates (pose + interaction)
+    updateSliderPose(frame);
+    updateSliderInteraction(frame);
+
+    // right-hand pinch states for this frame
+    _rightPinchDist = getRightPinchDistance(frame);
+    _rightPinch     = _rightPinchDist < SELECT_PINCH_M;
+    _rightDeepPinch = _rightPinchDist < NAV_PINCH_M;
+
+    // use slider as source of truth
+    voltage = sliderValue;
+    const myTextEl = document.getElementById('myText');
+    if (myTextEl) myTextEl.textContent = voltage.toFixed(2);
+
+
     applyVisionProSelectMovement();
 }
 
 function applyVisionProSelectMovement() {
-	const visionProActive = controllerStates.leftController.isVisionProSource || controllerStates.rightController.isVisionProSource;
-	if (!visionProActive) {
-		return;
-	}
+  const visionProActive = controllerStates.leftController.isVisionProSource || controllerStates.rightController.isVisionProSource;
+  if (!visionProActive) return;
 
-	const axesThreshold = 0.08;
-	const hasActiveAxes = (Math.abs(controllerStates.leftController.thumbstick.x) > axesThreshold ||
-		Math.abs(controllerStates.leftController.thumbstick.y) > axesThreshold ||
-		Math.abs(controllerStates.rightController.thumbstick.x) > axesThreshold ||
-		Math.abs(controllerStates.rightController.thumbstick.y) > axesThreshold);
+  // If user is using axes (trackpad/joystick), let that take precedence
+  const axesThreshold = 0.08;
+  const hasActiveAxes = (Math.abs(controllerStates.leftController.thumbstick.x)  > axesThreshold ||
+                         Math.abs(controllerStates.leftController.thumbstick.y)  > axesThreshold ||
+                         Math.abs(controllerStates.rightController.thumbstick.x) > axesThreshold ||
+                         Math.abs(controllerStates.rightController.thumbstick.y) > axesThreshold);
+  if (hasActiveAxes) return;
 
-	const controllersArray = [controller1, controller2];
-	controllersArray.forEach(controller => {
-		if (!controller || !controller.userData || !controller.userData.isSelecting) {
-			return;
-		}
+  // Only move when RIGHT hand performs a deeper pinch than select
+  if (!_rightDeepPinch) return;
 
-		const inputSource = controller.userData.inputSource;
-		if (!isVisionProInputSource(inputSource)) {
-			return;
-		}
+  // Use the right controller/hand ray to determine forward direction
+  const controller = controller2 || controller1; // fallback if index swap
+  if (!controller) return;
 
-		if (hasActiveAxes) {
-			return; // Prefer trackpad-style input when axes are active
-		}
+  const dir = new THREE.Vector3();
+  controller.getWorldDirection(dir);
+  dir.negate(); // controller rays point down -Z
+  dir.y = 0;
 
-		const direction = new THREE.Vector3();
-		controller.getWorldDirection(direction);
-		direction.negate(); // Controller rays point down -Z by default
-		direction.y = 0;
-		if (direction.lengthSq() < 1e-6) {
-			return;
-		}
+  if (dir.lengthSq() < 1e-6) return;
 
-		direction.normalize();
-		dolly.position.addScaledVector(direction, vrSettings.moveSpeed * 0.5);
-	});
+  dir.normalize();
+  dolly.position.addScaledVector(dir, vrSettings.moveSpeed * 0.5);
 }
 
 
