@@ -120,6 +120,7 @@ const controllerStates = {
 };
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+let orbit = null;
 let _lastT = null; // ms from XR animation loop
 
 // movement settings
@@ -797,6 +798,36 @@ function init() {
 
   initXR();
   container.appendChild(renderer.domElement);
+
+  // ---------------- Desktop OrbitControls (browser only) ----------------
+orbit = new OrbitControls(camera, renderer.domElement);
+orbit.enableDamping = true;
+orbit.dampingFactor = 0.08;
+
+// Pick a nice desktop orbit target (center of your PN junction)
+orbit.target.set(0, 0, 0);
+
+// Optional: limit crazy zooming / flipping in desktop mode
+orbit.minDistance = 20;
+orbit.maxDistance = 800;
+orbit.enablePan = true;
+
+orbit.update();
+
+// Auto-toggle when entering/leaving XR
+renderer.xr.addEventListener('sessionstart', () => {
+  if (orbit) orbit.enabled = false;       // XR owns the camera pose
+});
+
+renderer.xr.addEventListener('sessionend', () => {
+  if (orbit) {
+    orbit.enabled = true;
+    orbit.update();
+  }
+});
+
+
+  // XR CONTROLS
   container.appendChild(XRButton.createButton(renderer, {
     requiredFeatures: ['local-floor'],
     optionalFeatures: ['hand-tracking']
@@ -1101,6 +1132,11 @@ function update() {
   renderer.setAnimationLoop(function(timestamp, frame) {
     const dt = (_lastT === null) ? 0 : (timestamp - _lastT) / 1000;
   _lastT = timestamp;
+
+  // Desktop orbit updates only when NOT in WebXR
+if (orbit && !renderer.xr.isPresenting) {
+  orbit.update();
+}
     updateXRControllerStates(frame);
 
     // wrist slider updates (pose + interaction)
