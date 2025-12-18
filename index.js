@@ -556,11 +556,13 @@ function updateHandDebug(frame, refSpace) {
       const mesh = jointMap.get(jointName);
       if (!mesh) continue;
 
-      _mPose.fromArray(jointMatrices, jIndex * 16);
-      _mInvParent.copy(dolly.matrixWorld).invert();
-      _mLocal.multiplyMatrices(_mInvParent, _mPose);
+     _mPose.fromArray(jointMatrices, jIndex * 16);
 
-      _mLocal.decompose(mesh.position, mesh.quaternion, mesh.scale);
+// IMPORTANT: do NOT convert into dolly-local using inv(dolly).
+// These meshes are already children of `dolly`, so we want the XR pose
+// to be applied in dolly space so the hands move with locomotion.
+_mPose.decompose(mesh.position, mesh.quaternion, mesh.scale);
+
 
       const radius = jointRadii[jIndex] || 0.008;
       mesh.scale.setScalar(radius * 2.0);
@@ -617,7 +619,10 @@ function updateHandDebug(frame, refSpace) {
         const palmNormalWorld = vSide.clone().cross(vForward).normalize();
         if (handedness === 'right') palmNormalWorld.multiplyScalar(-1);
 
-        setFromXRPoseUnderParent(palmMesh, wristPose, dolly);
+        const t = wristPose.transform;
+palmMesh.position.set(t.position.x, t.position.y, t.position.z);
+palmMesh.quaternion.set(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w);
+
         palmMesh.visible = true;
 
         const dotUp = palmNormalWorld.dot(WORLD_UP);
