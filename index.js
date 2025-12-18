@@ -66,6 +66,9 @@ var eSignTextMesh;
 var eSignGeometry;
 
 const TRIGGER_THRESHOLD = 0.1;
+const THUMB_TURN_SPEED = 1.2;     // radians/sec (tweak)
+const THUMB_TURN_DEADZONE = 0.0;  // optional; keep 0 since it’s boolean
+
 
 // scatter variables
 var scatterTimeMean = 2;
@@ -700,6 +703,33 @@ function applyHandGestureLocomotion(frame) {
   if (moveBackward) dolly.position.addScaledVector(forward, -step);
 }
 
+// Gesture: thumb curl to rotate left/right
+
+function applyThumbTurn(dt) {
+  // Only rotate when we're actually in XR and using a dolly
+  if (!renderer.xr.isPresenting || !dolly) return;
+
+  const session = renderer.xr.getSession?.();
+  if (!session) return;
+
+  // ✅ Hand-tracking only: if any gamepad (Quest controllers) is present, do nothing
+  const hasAnyController = [...session.inputSources].some(src => !!src.gamepad && !src.hand);
+  const hasAnyHands = [...session.inputSources].some(src => !!src.hand);
+  if (!hasAnyHands || hasAnyController) return;
+
+  const leftThumbCurled  = !!handState.left?.curls?.thumb;
+  const rightThumbCurled = !!handState.right?.curls?.thumb;
+
+  // If both thumbs curled, cancel out (no rotation). You can change this if you want.
+  if (leftThumbCurled && rightThumbCurled) return;
+
+  if (rightThumbCurled) {
+    dolly.rotation.y -= THUMB_TURN_SPEED * dt; // rotate right
+  } else if (leftThumbCurled) {
+    dolly.rotation.y += THUMB_TURN_SPEED * dt; // rotate left
+  }
+}
+
 
 // ========================= App Boot =========================
 init();
@@ -1079,6 +1109,9 @@ function update() {
 
     // hand-only locomotion (disabled when Oculus controllers are present)
     applyHandGestureLocomotion(frame);
+
+    applyThumbTurn(dt);
+
 
     const myTextEl = document.getElementById('myText');
     if (myTextEl) myTextEl.textContent = voltage.toFixed(2);
