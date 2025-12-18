@@ -345,12 +345,17 @@ function updateSliderInteraction(frame) {
   if (!pinching) return;
 
   // Project index tip to slider local space
-  const idxWorld = new THREE.Vector3(
-    pI.transform.position.x,
-    pI.transform.position.y,
-    pI.transform.position.z
-  );
-  const local = sliderPanel.worldToLocal(idxWorld.clone());
+const idxWorld = new THREE.Vector3(
+  pI.transform.position.x,
+  pI.transform.position.y,
+  pI.transform.position.z
+);
+
+// slider is under `dolly`, so move the XR joint point into the same space
+if (dolly) idxWorld.applyMatrix4(dolly.matrixWorld);
+
+const local = sliderPanel.worldToLocal(idxWorld.clone());
+
 
   const clampedX = THREE.MathUtils.clamp(local.x, -TRACK_LEN_M/2, TRACK_LEN_M/2);
   const newV = xToValue(clampedX);
