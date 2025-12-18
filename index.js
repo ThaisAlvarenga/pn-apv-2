@@ -494,8 +494,8 @@ function initHandDebugMeshes() {
   dolly.add(handDebugRoot.left);
   dolly.add(handDebugRoot.right);
 
-  const jointGeom = new THREE.BoxGeometry(0.8, 0.8, 0.8);
-  const leftColor  = new THREE.Color(0xff00ff);
+  const jointGeom = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+  const leftColor  = new THREE.Color(0x00ffff);
   const rightColor = new THREE.Color(0x00ffff);
 
   ['left', 'right'].forEach((handedness) => {
@@ -882,11 +882,11 @@ renderer.xr.addEventListener('sessionend', () => {
   });
 
   const thermalControls = { scalar: SphereUtil.getScalar() };
-  gui.add(thermalControls, 'scalar', 0.001, 1.5, 0.01)
-    .name('Sphere Scalar')
-    .onChange((v) => {
-      SphereUtil.setScalar(v);
-    });
+//   gui.add(thermalControls, 'scalar', 0.001, 1.5, 0.01)
+//     .name('Sphere Scalar')
+//     .onChange((v) => {
+//       SphereUtil.setScalar(v);
+//     });
 
   const resetButton = { 'Reset Cube': resetGUI };
   gui.add(resetButton, 'Reset Cube');
