@@ -495,8 +495,8 @@ function initHandDebugMeshes() {
   dolly.add(handDebugRoot.right);
 
   const jointGeom = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-  const leftColor  = new THREE.Color(0x00ffff);
-  const rightColor = new THREE.Color(0x00ffff);
+  const leftColor  = new THREE.Color(0x56B4E9);
+  const rightColor = new THREE.Color(0x56B4E9);
 
   ['left', 'right'].forEach((handedness) => {
     const isLeft = handedness === 'left';
