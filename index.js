@@ -120,6 +120,7 @@ const controllerStates = {
 };
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+let _lastT = null; // ms from XR animation loop
 
 // movement settings
 const vrSettings = {
@@ -1098,6 +1099,8 @@ function updateXRControllerStates(frame) {
 // ========================= Update / Animate =========================
 function update() {
   renderer.setAnimationLoop(function(timestamp, frame) {
+    const dt = (_lastT === null) ? 0 : (timestamp - _lastT) / 1000;
+  _lastT = timestamp;
     updateXRControllerStates(frame);
 
     // wrist slider updates (pose + interaction)
@@ -1109,9 +1112,7 @@ function update() {
 
     // hand-only locomotion (disabled when Oculus controllers are present)
     applyHandGestureLocomotion(frame);
-
     applyThumbTurn(dt);
-
 
     const myTextEl = document.getElementById('myText');
     if (myTextEl) myTextEl.textContent = voltage.toFixed(2);
