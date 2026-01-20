@@ -1,4 +1,5 @@
-Visit [this link](https://marie077.github.io/pn-junc-three/) to play with the simulation!
+Visit [this link](https://thaisalvarenga.github.io/pn-apv-2/) to play with the simulation!
+This is a version compatible for both Apple Vision Pro and the Meta Quest based on the [project by Marie Ow] (https://marie077.github.io/pn-junc-three/) 
 
 1. Download this code by pressing the Code button and 'Download ZIP'
      ![image](https://github.com/marie077/pn-junc-three/assets/38340483/bd390c04-f151-4f9b-8b6a-518db166e909)
