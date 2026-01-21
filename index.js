@@ -259,8 +259,6 @@ function initWristSlider() {
     THREE.MathUtils.degToRad(-90)
   );
 
-  drawVoltageLabel(sliderValue);
-
     // ------------------- NAV TOGGLE BUTTON (on wrist panel) -------------------
   // [NAV TOGGLE]
   navCanvas = document.createElement('canvas');
@@ -289,7 +287,9 @@ function initWristSlider() {
 
   // initial label
   setNavigationEnabled(navigationEnabled);
-
+  
+  // voltage slider label
+  drawVoltageLabel(sliderValue);
 
   // XR session lifecycle
   renderer.xr.addEventListener('sessionstart', async () => {
