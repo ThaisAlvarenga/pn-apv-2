@@ -132,6 +132,7 @@ const vrSettings = {
 const loader = new FontLoader();
 var scene = new THREE.Scene();
 
+const _invDolly = new THREE.Matrix4();
 
 // ========================= Wrist Slider (left wrist; right-hand pinch) =========================
 
@@ -301,15 +302,16 @@ function updateSliderPose(frame) {
     const ht = leftHandSource.hand;
     const wrist = ht.get?.('wrist') || (typeof XRHand!=='undefined' && ht[XRHand.WRIST]);
     if (wrist) {
-      const pose = frame.getJointPose(wrist, xrRefSpace_local);
-      if (pose) {
-        const t = pose.transform;
-        sliderRoot.position.set(t.position.x, t.position.y, t.position.z);
-        sliderRoot.quaternion.set(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w);
-        sliderRoot.visible = true;
-        return;
-      }
-    }
+  const pose = frame.getJointPose(wrist, xrRefSpace_local);
+  if (pose) {
+    // sliderRoot is parented under dolly, so convert XR pose into dolly-local coords
+    const parentForSlider = dolly ?? scene;
+setFromXRPoseUnderParent(sliderRoot, pose, parentForSlider);
+    sliderRoot.visible = true;
+    return;
+  }
+}
+
   }
 
   // Fallback: left controller grip(0)
@@ -334,8 +336,8 @@ function updateSliderInteraction(frame) {
   if (!rhs || !rhs.hand) return;
 
   const ht = rhs.hand;
-  const tipIndex = ht.get?.('index-finger-tip') || (typeof XRHand!=='undefined' && XRHand.INDEX_PHALANX_TIP);
-  const tipThumb = ht.get?.('thumb-tip')        || (typeof XRHand!=='undefined' && XRHand.THUMB_PHALANX_TIP);
+  const tipIndex = ht.get?.('index-finger-tip') || (typeof XRHand !== 'undefined' && XRHand.INDEX_PHALANX_TIP);
+  const tipThumb = ht.get?.('thumb-tip')        || (typeof XRHand !== 'undefined' && XRHand.THUMB_PHALANX_TIP);
   if (!tipIndex || !tipThumb) return;
 
   const pI = frame.getJointPose(tipIndex, xrRefSpace_local);
@@ -349,18 +351,13 @@ function updateSliderInteraction(frame) {
   const pinching = dist < PINCH_THRESHOLD_M;
   if (!pinching) return;
 
-  // Project index tip to slider local space
-const idxWorld = new THREE.Vector3(
-  pI.transform.position.x,
-  pI.transform.position.y,
-  pI.transform.position.z
-);
+  const idxWorld = new THREE.Vector3(
+    pI.transform.position.x,
+    pI.transform.position.y,
+    pI.transform.position.z
+  );
 
-// slider is under `dolly`, so move the XR joint point into the same space
-if (dolly) idxWorld.applyMatrix4(dolly.matrixWorld);
-
-const local = sliderPanel.worldToLocal(idxWorld.clone());
-
+  const local = sliderPanel.worldToLocal(idxWorld.clone());
 
   const clampedX = THREE.MathUtils.clamp(local.x, -TRACK_LEN_M/2, TRACK_LEN_M/2);
   const newV = xToValue(clampedX);
@@ -368,6 +365,7 @@ const local = sliderPanel.worldToLocal(idxWorld.clone());
   sliderKnob.position.x = THREE.MathUtils.lerp(sliderKnob.position.x, clampedX, 0.35);
   setVoltage(newV);
 }
+
 
 function getSliderValue() { return sliderValue; }
 
@@ -532,6 +530,10 @@ function updateHandDebug(frame, refSpace) {
   if (!session || !frame || !refSpace) return;
 
   dolly.updateMatrixWorld(true);
+  _invDolly.copy(dolly.matrixWorld).invert();
+
+   
+
 
   ['left', 'right'].forEach((handedness) => {
     const src = findHand(session, handedness);
@@ -561,25 +563,24 @@ function updateHandDebug(frame, refSpace) {
     }
 
     // apply joint transforms in dolly-local space
-    for (let jIndex = 0; jIndex < HAND_JOINT_NAMES.length; jIndex++) {
-      const jointName = HAND_JOINT_NAMES[jIndex];
-      const mesh = jointMap.get(jointName);
-      if (!mesh) continue;
+for (let jIndex = 0; jIndex < HAND_JOINT_NAMES.length; jIndex++) {
+  const jointName = HAND_JOINT_NAMES[jIndex];
+  const mesh = jointMap.get(jointName);
+  if (!mesh) continue;
 
-     _mPose.fromArray(jointMatrices, jIndex * 16);
+  _mPose.fromArray(jointMatrices, jIndex * 16);
 
-// IMPORTANT: do NOT convert into dolly-local using inv(dolly).
-// These meshes are already children of `dolly`, so we want the XR pose
-// to be applied in dolly space so the hands move with locomotion.
-_mPose.decompose(mesh.position, mesh.quaternion, mesh.scale);
+  // Convert from XR reference-space -> dolly-local space
+  _mLocal.multiplyMatrices(_invDolly, _mPose);
+  _mLocal.decompose(mesh.position, mesh.quaternion, mesh.scale);
 
+  const radius = jointRadii[jIndex] || 0.008;
+  mesh.scale.setScalar(radius * 2.0);
+  mesh.visible = true;
 
-      const radius = jointRadii[jIndex] || 0.008;
-      mesh.scale.setScalar(radius * 2.0);
-      mesh.visible = true;
+  jointPositions[handedness][jointName] = mesh.position.clone();
+}
 
-      jointPositions[handedness][jointName] = mesh.position.clone();
-    }
 
     // curl detection
     const baseHex   = handedness === 'left' ? 0xff00ff : 0x00ffff;
@@ -630,9 +631,8 @@ _mPose.decompose(mesh.position, mesh.quaternion, mesh.scale);
         if (handedness === 'right') palmNormalWorld.multiplyScalar(-1);
 
         const t = wristPose.transform;
-palmMesh.position.set(t.position.x, t.position.y, t.position.z);
-palmMesh.quaternion.set(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w);
-
+setFromXRPoseUnderParent(palmMesh, wristPose, dolly);
+palmMesh.visible = true;
         palmMesh.visible = true;
 
         const dotUp = palmNormalWorld.dot(WORLD_UP);
@@ -1054,15 +1054,20 @@ function resetControllerFrameState(state) {
 function isVisionProInputSource(inputSource) {
   if (!inputSource) return false;
 
-  const handedness = inputSource.handedness || '';
-  if (handedness === 'none') return true;
+  // Vision Pro "gaze / transient pointer" often reports handedness: 'none'
+  if (inputSource.handedness === 'none') return true;
 
-  const profiles = inputSource.profiles || [];
-  return profiles.some(profile => {
-    const lowered = profile.toLowerCase();
-    return lowered.includes('vision') || lowered.includes('touch') || lowered.includes('hand');
-  });
+  const profiles = (inputSource.profiles || []).map(p => p.toLowerCase());
+
+  // Be strict: only match Apple/VisionOS-ish strings
+  return profiles.some(p =>
+    p.includes('apple') ||
+    p.includes('visionos') ||
+    p.includes('vision-pro') ||
+    p.includes('spatial')
+  );
 }
+
 
 function updateXRControllerStates(frame) {
   resetControllerFrameState(controllerStates.leftController);
