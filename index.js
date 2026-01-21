@@ -234,34 +234,7 @@ function initWristSlider() {
   sliderKnob.position.set(valueToX(sliderValue), 0, 0.001);
   sliderPanel.add(sliderKnob);
 
-  // label (canvas)
-  labelCanvas = document.createElement('canvas');
-  labelCanvas.width = 1024; labelCanvas.height = 256;
-  labelCtx = labelCanvas.getContext('2d');
-
-  labelTex = new THREE.CanvasTexture(labelCanvas);
-  labelTex.colorSpace = THREE.SRGBColorSpace;
-  labelTex.minFilter = THREE.LinearFilter;
-  labelTex.magFilter = THREE.LinearFilter;
-
-  labelMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.30, 0.09),
-    new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, depthTest: false, depthWrite: false })
-  );
-  labelMesh.position.set(0, 0.09, 0.006);
-  sliderPanel.add(labelMesh);
-
-  // local placement near the wrist (tweak)
-  sliderPanel.position.set(0.07, 0.02, -0.05);
-  sliderPanel.rotation.set(
-    THREE.MathUtils.degToRad(45),
-    THREE.MathUtils.degToRad(25),
-    THREE.MathUtils.degToRad(-90)
-  );
-
-  drawVoltageLabel(sliderValue);
-
-    // ------------------- NAV TOGGLE BUTTON (on wrist panel) -------------------
+  // ------------------- NAV TOGGLE BUTTON (on wrist panel) -------------------
   // [NAV TOGGLE]
   navCanvas = document.createElement('canvas');
   navCanvas.width = 1024;
@@ -290,6 +263,33 @@ function initWristSlider() {
   // initial label
   setNavigationEnabled(navigationEnabled);
 
+
+  // label (canvas)
+  labelCanvas = document.createElement('canvas');
+  labelCanvas.width = 1024; labelCanvas.height = 256;
+  labelCtx = labelCanvas.getContext('2d');
+
+  labelTex = new THREE.CanvasTexture(labelCanvas);
+  labelTex.colorSpace = THREE.SRGBColorSpace;
+  labelTex.minFilter = THREE.LinearFilter;
+  labelTex.magFilter = THREE.LinearFilter;
+
+  labelMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.30, 0.09),
+    new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, depthTest: false, depthWrite: false })
+  );
+  labelMesh.position.set(0, 0.09, 0.006);
+  sliderPanel.add(labelMesh);
+
+  // local placement near the wrist (tweak)
+  sliderPanel.position.set(0.07, 0.02, -0.05);
+  sliderPanel.rotation.set(
+    THREE.MathUtils.degToRad(45),
+    THREE.MathUtils.degToRad(25),
+    THREE.MathUtils.degToRad(-90)
+  );
+
+  drawVoltageLabel(sliderValue);
 
   // XR session lifecycle
   renderer.xr.addEventListener('sessionstart', async () => {
