@@ -435,7 +435,7 @@ let navToggleLatched = false;
 // button layout in sliderPanel local space
 const NAV_BTN_W = 0.10;   // meters
 const NAV_BTN_H = 0.032;  // meters
-const NAV_BTN_Y = .5;   // above the slider track (track is y=0)
+const NAV_BTN_Y = .15;   // above the slider track (track is y=0)
 
 // Draw + update helpers
 function drawNavButtonLabel() {
