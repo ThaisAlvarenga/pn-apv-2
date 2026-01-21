@@ -234,33 +234,7 @@ function initWristSlider() {
   sliderKnob.position.set(valueToX(sliderValue), 0, 0.001);
   sliderPanel.add(sliderKnob);
 
-  // label (canvas)
-  labelCanvas = document.createElement('canvas');
-  labelCanvas.width = 1024; labelCanvas.height = 256;
-  labelCtx = labelCanvas.getContext('2d');
-
-  labelTex = new THREE.CanvasTexture(labelCanvas);
-  labelTex.colorSpace = THREE.SRGBColorSpace;
-  labelTex.minFilter = THREE.LinearFilter;
-  labelTex.magFilter = THREE.LinearFilter;
-
-  labelMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.30, 0.09),
-    new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, depthTest: false, depthWrite: false })
-  );
-  labelMesh.position.set(0, 0.09, 0.006);
-  sliderPanel.add(labelMesh);
-
-  // local placement near the wrist (tweak)
-  sliderPanel.position.set(0.07, 0.02, -0.05);
-  sliderPanel.rotation.set(
-    THREE.MathUtils.degToRad(45),
-    THREE.MathUtils.degToRad(25),
-    THREE.MathUtils.degToRad(-90)
-  );
-
     // ------------------- NAV TOGGLE BUTTON (on wrist panel) -------------------
-  // [NAV TOGGLE]
   navCanvas = document.createElement('canvas');
   navCanvas.width = 1024;
   navCanvas.height = 256;
@@ -281,15 +255,36 @@ function initWristSlider() {
     })
   );
 
-  // place button above the track
-  navButtonMesh.position.set(0, NAV_BTN_Y, 0.006);
+  // place button ABOVE the voltage label
+  navButtonMesh.position.set(0, 0.125, 0.006);
   sliderPanel.add(navButtonMesh);
 
-  // initial label
+  // initial label render
   setNavigationEnabled(navigationEnabled);
-  
-  // voltage slider label
+
+  // ------------------- VOLTAGE LABEL (canvas) -------------------
+  labelCanvas = document.createElement('canvas');
+  labelCanvas.width = 1024; labelCanvas.height = 256;
+  labelCtx = labelCanvas.getContext('2d');
+
+  labelTex = new THREE.CanvasTexture(labelCanvas);
+  labelTex.colorSpace = THREE.SRGBColorSpace;
+  labelTex.minFilter = THREE.LinearFilter;
+  labelTex.magFilter = THREE.LinearFilter;
+
+  labelMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.30, 0.09),
+    new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, depthTest: false, depthWrite: false })
+  );
+
+  // voltage label stays below the toggle button
+  labelMesh.position.set(0, 0.09, 0.006);
+  sliderPanel.add(labelMesh);
+
   drawVoltageLabel(sliderValue);
+
+
+
 
   // XR session lifecycle
   renderer.xr.addEventListener('sessionstart', async () => {
@@ -435,7 +430,7 @@ let navToggleLatched = false;
 // button layout in sliderPanel local space
 const NAV_BTN_W = 0.10;   // meters
 const NAV_BTN_H = 0.032;  // meters
-const NAV_BTN_Y = 0.04;   // above the slider track (track is y=0)
+const NAV_BTN_Y = 0.125;   // above the slider track (track is y=0)
 
 // Draw + update helpers
 function drawNavButtonLabel() {
