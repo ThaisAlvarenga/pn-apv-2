@@ -261,6 +261,36 @@ function initWristSlider() {
 
   drawVoltageLabel(sliderValue);
 
+    // ------------------- NAV TOGGLE BUTTON (on wrist panel) -------------------
+  // [NAV TOGGLE]
+  navCanvas = document.createElement('canvas');
+  navCanvas.width = 1024;
+  navCanvas.height = 256;
+  navCtx = navCanvas.getContext('2d');
+
+  navTex = new THREE.CanvasTexture(navCanvas);
+  navTex.colorSpace = THREE.SRGBColorSpace;
+  navTex.minFilter = THREE.LinearFilter;
+  navTex.magFilter = THREE.LinearFilter;
+
+  navButtonMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(NAV_BTN_W, NAV_BTN_H),
+    new THREE.MeshBasicMaterial({
+      map: navTex,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false
+    })
+  );
+
+  // place button above the track
+  navButtonMesh.position.set(0, NAV_BTN_Y, 0.006);
+  sliderPanel.add(navButtonMesh);
+
+  // initial label
+  setNavigationEnabled(navigationEnabled);
+
+
   // XR session lifecycle
   renderer.xr.addEventListener('sessionstart', async () => {
     const s = renderer.xr.getSession();
@@ -346,22 +376,41 @@ function updateSliderInteraction(frame) {
   const dy = pI.transform.position.y - pT.transform.position.y;
   const dz = pI.transform.position.z - pT.transform.position.z;
   const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
   const pinching = dist < PINCH_THRESHOLD_M;
-  if (!pinching) return;
+
+  // [NAV TOGGLE] reset latch when pinch is released
+  if (!pinching) {
+    navToggleLatched = false;
+    return;
+  }
 
   // Project index tip to slider local space
-const idxWorld = new THREE.Vector3(
-  pI.transform.position.x,
-  pI.transform.position.y,
-  pI.transform.position.z
-);
+  const idxWorld = new THREE.Vector3(
+    pI.transform.position.x,
+    pI.transform.position.y,
+    pI.transform.position.z
+  );
 
-// slider is under `dolly`, so move the XR joint point into the same space
-if (dolly) idxWorld.applyMatrix4(dolly.matrixWorld);
+  // slider is under `dolly`, so move the XR joint point into the same space
+  if (dolly) idxWorld.applyMatrix4(dolly.matrixWorld);
 
-const local = sliderPanel.worldToLocal(idxWorld.clone());
+  const local = sliderPanel.worldToLocal(idxWorld.clone());
 
+  // [NAV TOGGLE] 1) BUTTON HIT TEST (priority over slider dragging)
+  const hitNav =
+    Math.abs(local.x - 0) <= (NAV_BTN_W * 0.5) &&
+    Math.abs(local.y - NAV_BTN_Y) <= (NAV_BTN_H * 0.5);
 
+  if (hitNav) {
+    if (!navToggleLatched) {
+      setNavigationEnabled(!navigationEnabled);
+      navToggleLatched = true;
+    }
+    return; // don't also drag slider on same pinch
+  }
+
+  // 2) SLIDER DRAG
   const clampedX = THREE.MathUtils.clamp(local.x, -TRACK_LEN_M/2, TRACK_LEN_M/2);
   const newV = xToValue(clampedX);
 
@@ -369,19 +418,55 @@ const local = sliderPanel.worldToLocal(idxWorld.clone());
   setVoltage(newV);
 }
 
+
 function getSliderValue() { return sliderValue; }
 
-// ========================= Navigation Toggle =========================
-let navigationEnabled = true; // default ON
+// ========================= Wrist Nav Toggle (on wrist panel) =========================
+// [NAV TOGGLE]
+let navigationEnabled = true;
+
+// 3D button pieces
+let navButtonMesh = null;
+let navCanvas = null, navCtx = null, navTex = null;
+
+// debounce latch (toggle once per pinch)
+let navToggleLatched = false;
+
+// button layout in sliderPanel local space
+const NAV_BTN_W = 0.10;   // meters
+const NAV_BTN_H = 0.032;  // meters
+const NAV_BTN_Y = 0.04;   // above the slider track (track is y=0)
+
+// Draw + update helpers
+function drawNavButtonLabel() {
+  if (!navCtx || !navCanvas || !navTex) return;
+
+  const W = navCanvas.width, H = navCanvas.height;
+  navCtx.clearRect(0, 0, W, H);
+
+  // background
+  navCtx.fillStyle = navigationEnabled ? 'rgba(30,130,60,0.85)' : 'rgba(140,40,40,0.85)';
+  navCtx.fillRect(0, 0, W, H);
+
+  // border
+  navCtx.strokeStyle = 'rgba(255,255,255,0.65)';
+  navCtx.lineWidth = 12;
+  navCtx.strokeRect(10, 10, W - 20, H - 20);
+
+  // text
+  navCtx.fillStyle = '#fff';
+  navCtx.font = 'bold 120px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+  navCtx.textAlign = 'center';
+  navCtx.textBaseline = 'middle';
+  navCtx.fillText(`NAV: ${navigationEnabled ? 'ON' : 'OFF'}`, W / 2, H / 2);
+
+  navTex.needsUpdate = true;
+}
 
 function setNavigationEnabled(on) {
   navigationEnabled = !!on;
-
-  // Optional: show state somewhere
-  const navLabel = document.getElementById('navStatus');
-  if (navLabel) navLabel.textContent = navigationEnabled ? 'ON' : 'OFF';
+  drawNavButtonLabel();
 }
-
 
 
 
@@ -691,15 +776,13 @@ function hasOculusControllers(session) {
 // - RIGHT: pinky+ring+middle curled => move forward
 // - LEFT:  index+middle+ring+pinky curled => move backward
 function applyHandGestureLocomotion(frame) {
-  // Only move when navigation is enabled
-   if (!navigationEnabled) return;
-  // Only move when we're actually in XR and using a dolly
   if (!renderer.xr.isPresenting) return;
+
+  // [NAV TOGGLE]
+  if (!navigationEnabled) return;
+
   const session = renderer.xr.getSession?.();
-  // Only when we have a session
   if (!session) return;
-
-
 
   // Only when hands are active and Oculus controllers are NOT present
   if (!hasHands(session)) return;
@@ -727,8 +810,8 @@ function applyHandGestureLocomotion(frame) {
 // Gesture: thumb curl to rotate left/right
 
 function applyThumbTurn(dt) {
-  // Only move when navigation is enabled
-   if (!navigationEnabled) return;
+  // [NAV TOGGLE]
+  if (!navigationEnabled) return;
 
   // Only rotate when we're actually in XR and using a dolly
   if (!renderer.xr.isPresenting || !dolly) return;
@@ -755,8 +838,6 @@ function applyThumbTurn(dt) {
 }
 
 
-
-
 // ========================= App Boot =========================
 init();
 update();
@@ -773,56 +854,6 @@ setInterval(() => {
 setInterval(() => {
   Recombination.recombinationOrbRemove(recombination_orbs, scene);
 }, 2000);
-
-function addNavToggleAboveSlider() {
-  // Use the global voltageControl if it exists, otherwise re-query
-  const slider = voltageControl || document.getElementById('voltage');
-  if (!slider || !slider.parentNode) {
-    console.warn('[NavToggle] voltage slider not found yet.');
-    return;
-  }
-
-  // Avoid adding twice (hot reload / re-init)
-  if (document.getElementById('navToggleBtn')) return;
-
-  const wrap = document.createElement('div');
-  wrap.style.display = 'flex';
-  wrap.style.alignItems = 'center';
-  wrap.style.gap = '10px';
-  wrap.style.marginBottom = '8px';
-
-  const btn = document.createElement('button');
-  btn.id = 'navToggleBtn';
-  btn.type = 'button';
-  btn.textContent = `Navigation: ${navigationEnabled ? 'ON' : 'OFF'}`;
-  btn.style.padding = '6px 10px';
-  btn.style.borderRadius = '8px';
-  btn.style.border = '1px solid rgba(255,255,255,0.25)';
-  btn.style.background = 'rgba(0,0,0,0.35)';
-  btn.style.color = 'white';
-  btn.style.cursor = 'pointer';
-  btn.style.opacity = navigationEnabled ? '1' : '0.65';
-
-  const status = document.createElement('span');
-  status.id = 'navStatus';
-  status.textContent = navigationEnabled ? 'ON' : 'OFF';
-  status.style.opacity = '0.8';
-  status.style.fontFamily = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-  status.style.fontSize = '12px';
-
-  btn.addEventListener('click', () => {
-    setNavigationEnabled(!navigationEnabled);
-    btn.textContent = `Navigation: ${navigationEnabled ? 'ON' : 'OFF'}`;
-    status.textContent = navigationEnabled ? 'ON' : 'OFF';
-    btn.style.opacity = navigationEnabled ? '1' : '0.65';
-  });
-
-  // Insert above the slider
-  slider.parentNode.insertBefore(wrap, slider);
-  wrap.appendChild(btn);
-  wrap.appendChild(status);
-}
-
 
 
 // ========================= Init =========================
@@ -850,7 +881,6 @@ function init() {
     console.error('Container not found');
     return;
   }
-  addNavToggleAboveSlider();
 
   new RGBELoader()
     .load(hdrFile, function (texture) {
@@ -1222,7 +1252,6 @@ if (orbit && !renderer.xr.isPresenting) {
     if (frame && xrRefSpace_local) updateHandDebug(frame, xrRefSpace_local);
 
     // hand-only locomotion (disabled when Oculus controllers are present)
-    
     applyHandGestureLocomotion(frame);
     applyThumbTurn(dt);
 
@@ -1381,9 +1410,10 @@ async function initXR(frame) {
 }
 
 function updateCamera() {
-  
   if (!renderer.xr.isPresenting) return;
+    // [NAV TOGGLE]
   if (!navigationEnabled) return;
+
 
   const leftThumbstick = controllerStates.leftController.thumbstick;
   const rightThumbstick = controllerStates.rightController.thumbstick;
@@ -1431,8 +1461,9 @@ function updateCamera() {
 }
 
 function applyVisionProSelectMovement() {
+    // [NAV TOGGLE]
   if (!navigationEnabled) return;
-  
+
   const visionProActive = controllerStates.leftController.isVisionProSource || controllerStates.rightController.isVisionProSource;
   if (!visionProActive) return;
 
