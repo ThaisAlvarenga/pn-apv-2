@@ -371,6 +371,19 @@ const local = sliderPanel.worldToLocal(idxWorld.clone());
 
 function getSliderValue() { return sliderValue; }
 
+// ========================= Navigation Toggle =========================
+let navigationEnabled = true; // default ON
+
+function setNavigationEnabled(on) {
+  navigationEnabled = !!on;
+
+  // Optional: show state somewhere
+  const navLabel = document.getElementById('navStatus');
+  if (navLabel) navLabel.textContent = navigationEnabled ? 'ON' : 'OFF';
+}
+
+
+
 
 // ========================= HAND DEBUG + HAND-ONLY NAVIGATION =========================
 
@@ -678,9 +691,15 @@ function hasOculusControllers(session) {
 // - RIGHT: pinky+ring+middle curled => move forward
 // - LEFT:  index+middle+ring+pinky curled => move backward
 function applyHandGestureLocomotion(frame) {
+  // Only move when navigation is enabled
+   if (!navigationEnabled) return;
+  // Only move when we're actually in XR and using a dolly
   if (!renderer.xr.isPresenting) return;
   const session = renderer.xr.getSession?.();
+  // Only when we have a session
   if (!session) return;
+
+
 
   // Only when hands are active and Oculus controllers are NOT present
   if (!hasHands(session)) return;
@@ -708,6 +727,9 @@ function applyHandGestureLocomotion(frame) {
 // Gesture: thumb curl to rotate left/right
 
 function applyThumbTurn(dt) {
+  // Only move when navigation is enabled
+   if (!navigationEnabled) return;
+
   // Only rotate when we're actually in XR and using a dolly
   if (!renderer.xr.isPresenting || !dolly) return;
 
@@ -733,6 +755,8 @@ function applyThumbTurn(dt) {
 }
 
 
+
+
 // ========================= App Boot =========================
 init();
 update();
@@ -749,6 +773,56 @@ setInterval(() => {
 setInterval(() => {
   Recombination.recombinationOrbRemove(recombination_orbs, scene);
 }, 2000);
+
+function addNavToggleAboveSlider() {
+  // Use the global voltageControl if it exists, otherwise re-query
+  const slider = voltageControl || document.getElementById('voltage');
+  if (!slider || !slider.parentNode) {
+    console.warn('[NavToggle] voltage slider not found yet.');
+    return;
+  }
+
+  // Avoid adding twice (hot reload / re-init)
+  if (document.getElementById('navToggleBtn')) return;
+
+  const wrap = document.createElement('div');
+  wrap.style.display = 'flex';
+  wrap.style.alignItems = 'center';
+  wrap.style.gap = '10px';
+  wrap.style.marginBottom = '8px';
+
+  const btn = document.createElement('button');
+  btn.id = 'navToggleBtn';
+  btn.type = 'button';
+  btn.textContent = `Navigation: ${navigationEnabled ? 'ON' : 'OFF'}`;
+  btn.style.padding = '6px 10px';
+  btn.style.borderRadius = '8px';
+  btn.style.border = '1px solid rgba(255,255,255,0.25)';
+  btn.style.background = 'rgba(0,0,0,0.35)';
+  btn.style.color = 'white';
+  btn.style.cursor = 'pointer';
+  btn.style.opacity = navigationEnabled ? '1' : '0.65';
+
+  const status = document.createElement('span');
+  status.id = 'navStatus';
+  status.textContent = navigationEnabled ? 'ON' : 'OFF';
+  status.style.opacity = '0.8';
+  status.style.fontFamily = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+  status.style.fontSize = '12px';
+
+  btn.addEventListener('click', () => {
+    setNavigationEnabled(!navigationEnabled);
+    btn.textContent = `Navigation: ${navigationEnabled ? 'ON' : 'OFF'}`;
+    status.textContent = navigationEnabled ? 'ON' : 'OFF';
+    btn.style.opacity = navigationEnabled ? '1' : '0.65';
+  });
+
+  // Insert above the slider
+  slider.parentNode.insertBefore(wrap, slider);
+  wrap.appendChild(btn);
+  wrap.appendChild(status);
+}
+
 
 
 // ========================= Init =========================
@@ -776,6 +850,7 @@ function init() {
     console.error('Container not found');
     return;
   }
+  addNavToggleAboveSlider();
 
   new RGBELoader()
     .load(hdrFile, function (texture) {
@@ -1147,6 +1222,7 @@ if (orbit && !renderer.xr.isPresenting) {
     if (frame && xrRefSpace_local) updateHandDebug(frame, xrRefSpace_local);
 
     // hand-only locomotion (disabled when Oculus controllers are present)
+    
     applyHandGestureLocomotion(frame);
     applyThumbTurn(dt);
 
@@ -1305,7 +1381,9 @@ async function initXR(frame) {
 }
 
 function updateCamera() {
+  
   if (!renderer.xr.isPresenting) return;
+  if (!navigationEnabled) return;
 
   const leftThumbstick = controllerStates.leftController.thumbstick;
   const rightThumbstick = controllerStates.rightController.thumbstick;
@@ -1353,6 +1431,8 @@ function updateCamera() {
 }
 
 function applyVisionProSelectMovement() {
+  if (!navigationEnabled) return;
+  
   const visionProActive = controllerStates.leftController.isVisionProSource || controllerStates.rightController.isVisionProSource;
   if (!visionProActive) return;
 
